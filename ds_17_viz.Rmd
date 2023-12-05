@@ -1,0 +1,294 @@
+---
+title: "ds_17_viz"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-11-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We will read some protein data:
+```{r}
+library(readr)
+df <- readr::read_csv("../Resources_practicals/data/data/proteins.csv")
+df$n_residues <- as.numeric(df$n_residues)
+df$resolution <- as.numeric(df$resolution)
+```
+
+
+We may now wonder what organisms those proteins come from.
+We will use the `count` function from `dplyr` for that:
+
+```{r}
+library(dplyr)
+source.df <- count(df, source)
+source.df
+```
+
+There are a great many species, looking through it by hand may not be very practical....
+Let's plot our data!
+
+We will use `ggplot` for that. GGplot uses its own syntax
+```{r}
+library(ggplot2)
+ggplot(df, aes(x = source)) +
+  geom_bar()
+```
+
+This is not very helpful! We would like to only plot the most common species for now.
+We will order the data by counts, and keep the first five, then plot as before:
+```{r}
+library(forcats)
+source.df[order(source.df$n, decreasing = TRUE), ] %>%
+  filter(!is.na(source)) %>% # data cleaning
+  top_n(5) %>%
+  ggplot( aes(x=source, y=n)) +
+  geom_bar(stat = 'identity')
+```
+Much better! We can see the most common species easily. One of them is not like the others... Some data cleaning might be in order.
+N.B: We could also use the `forcats` library to do that (you can always write custom transforms manually, when needed); you can find a nice overview of forcats methods at this address: https://raw.githubusercontent.com/rstudio/cheatsheets/main/factors.pdf
+
+Another way to group and filter our data, using `dplyr`, and starting from the original dataframe (this time we will keep all species present more than 500 times):
+```{r}
+df %>%
+  group_by(source) %>%
+  filter(n() > 500) %>%
+  ggplot(aes(x=source)) +
+  geom_bar()
+```
+Note that the code is easier to follow, each step is cleanly separated from the next.
+This will make it easier to change it in the future, or to find out a problem along the way!
+
+
+
+Let's now see some other statistics on our data, for example the number of residues per proteins, for the top species:
+```{r}
+df %>%
+  group_by(source) %>%
+  filter(!is.na(source)) %>% # data cleaning
+  filter(n() > 500) %>%
+  filter(n_residues < 1000) %>%
+  ggplot(aes(x=source, y=n_residues, fill=source)) +
+  geom_boxplot()
+```
+
+Different plots will show us different views of our data:
+```{r}
+df %>%
+  group_by(source) %>%
+  filter(!is.na(source)) %>% # data cleaning
+  filter(n() > 500) %>%
+  filter(n_residues < 1000) %>%
+  ggplot(aes(x=source, y=n_residues, fill=source)) +
+  geom_violin()
+```
+
+```{r}
+df
+```
+
+What method has the lowest average resolution? The highest?
+Try to fix the plot to figure it out:
+```{r}
+df %>%
+  group_by(exp_method) %>%
+  filter(resolution < 100) %>% #something is missing here...
+  ggplot(aes(x=exp_method, y=resolution, fill=exp_method)) +
+    geom_boxplot()
+```
+
+
+We can observe trends, assuming our data is correctly filtered:
+```{r}
+df %>%
+  filter(n_residues < 1000) %>%
+  filter(resolution < 5) %>%
+  ggplot(aes(x=n_residues, y=resolution)) +
+  geom_point()
+```
+Bonus question: why are there horizontal lines in this plot? Tip: We all like round numbers...
+
+Fairly complex plots can be created rather quickly, using methods from ggplot, (and here, `ggExtra`)
+```{r}
+library(ggExtra)
+p <- df %>%
+  filter(n_residues < 1000) %>%
+  filter(resolution < 5) %>%
+  ggplot(aes(x=n_residues, y=resolution, size=n_chains)) +
+  geom_point()
+ggMarginal(p, type="histogram")
+```
+
+
+In turn, this type of plot can be easily packaged together in a Rshiny app,
+a local app that provides interactive controls for your plot:
+(N.B: example taken from: https://shiny.posit.co/)
+```{r}
+library(shiny)
+library(bslib)
+library(dplyr)
+library(ggplot2)
+library(ggExtra)
+
+penguins_csv <- "https://raw.githubusercontent.com/jcheng5/simplepenguins.R/main/penguins.csv"
+
+df <- readr::read_csv(penguins_csv)
+# Find subset of columns that are suitable for scatter plot
+df_num <- df |> select(where(is.numeric), -Year)
+
+ui <- page_sidebar(
+  theme = bs_theme(bootswatch = "minty"),
+  sidebar = sidebar(
+    varSelectInput("xvar", "X variable", df_num, selected = "Bill Length (mm)"),
+    varSelectInput("yvar", "Y variable", df_num, selected = "Bill Depth (mm)"),
+    checkboxGroupInput(
+      "species", "Filter by species",
+      choices = unique(df$Species), 
+      selected = unique(df$Species)
+    ),
+    hr(), # Add a horizontal rule
+    checkboxInput("by_species", "Show species", TRUE),
+    checkboxInput("show_margins", "Show marginal plots", TRUE),
+    checkboxInput("smooth", "Add smoother"),
+  ),
+  plotOutput("scatter")
+)
+
+server <- function(input, output, session) {
+  subsetted <- reactive({
+    req(input$species)
+    df |> filter(Species %in% input$species)
+  })
+  
+  output$scatter <- renderPlot({
+    p <- ggplot(subsetted(), aes(!!input$xvar, !!input$yvar)) + list(
+      theme(legend.position = "bottom"),
+      if (input$by_species) aes(color = Species),
+      geom_point(),
+      if (input$smooth) geom_smooth()
+    )
+    
+    if (input$show_margins) {
+      margin_type <- if (input$by_species) "density" else "histogram"
+      p <- ggExtra::ggMarginal(p, type = margin_type, margins = "both",
+                               size = 8, groupColour = input$by_species, groupFill = input$by_species)
+    }
+    
+    p
+  }, res = 100)
+}
+
+shinyApp(ui, server)
+```
+
+
+Pratical question HLA-A*02 dataset
+
+This is a dataset of **T-cell epitopes** taken from the VDJdb database. You don't need to understand the biology here, although to make minimal sense of this data it is worth knowing that:
+
+- Each row contains a short protein sequence (called an epitope) from a source species and a corresponding sequence (the CDR3) from a T-cell receptor (T cells are one of the key types of cell within our adaptive immune systems)
+- Presentation of epitopes occurs on the surface of our regular cells and is carried out by special molecules, some of which are encoded by HLA-A*02 genes. 
+
+
+**1. Species counts**
+
+Draw a barplot (with an appropriate colour palette) showing species (column `Epitope species`) on the y-axis and the number of rows on the x-axis (this represents the unique number of TCR/epitope combinations). Exclude species that have fewer than 50 rows. 
+
+```{r}
+epitope_fname = '../Resources_practicals/data/data/HLA-A2.tsv'
+
+epitope <- read_tsv(epitope_fname)
+
+epitope %>%
+  group_by(`Epitope species`) %>%
+  summarise(n = n()) %>%
+  arrange(n) %>%
+  filter(n > 50) %>%
+  ggplot(aes(x=n, y=`Epitope species`, fill=n)) +
+  scale_color_viridis_b() +
+  geom_bar(stat="identity")
+```
+
+**2. Plotting epitope length and CDR3 length**
+
+Create a single plot containing two histograms: one for epitope lengths and one for CDR3 lengths. 
+
+- Exclude data to focus in on the area of interest as appropriate
+- Add a legend.
+
+```{r}
+epitope %>%
+  mutate (epitope_length = nchar(Epitope)) %>%
+  mutate (CDR3_length = nchar(CDR3)) %>%
+  select (epitope_length, CDR3_length) %>%
+  pivot_longer (cols = c(epitope_length, CDR3_length)) %>%
+  #filter(name %in% "epitope_length") %>%
+  ggplot(aes(x=value, fill=name)) +
+  geom_histogram(bins = 35, alpha=0.6, position="identity")
+
+```
+
+
+3** (Optional, hard!) Create a Shiny app
+
+Can you create an interactive view of this dataset?
+Start from the shiny code above.
+
+```{r}
+library(shiny)
+library(bslib)
+library(dplyr)
+library(ggplot2)
+library(ggExtra)
+
+epitope <- read_tsv(epitope_fname)
+
+# modify the dataset to select data that will generate the histograms
+epitope %>%
+  mutate (epitope_length = nchar(Epitope)) %>%
+  mutate (CDR3_length = nchar(CDR3)) %>%
+  select (epitope_length, CDR3_length) %>%
+  pivot_longer (cols = c(epitope_length, CDR3_length)) -> df
+
+ui <- page_sidebar(
+  theme = bs_theme(bootswatch = "minty"),
+  sidebar = sidebar(
+    checkboxGroupInput(
+      "nom", 
+      "Filter by protein sequence",
+      choices = unique(df$name), 
+      selected = unique(df$name)
+    ),
+    hr(), # Add a horizontal rule
+  ),
+  plotOutput("histo")
+)
+
+server <- function(input, output, session) {
+  subsetted <- reactive({
+    req(input$nom)
+    df |> filter(name %in% input$nom)
+  })
+  
+  output$histo <- renderPlot({
+    p <- ggplot(subsetted(), aes(value, fill=name)) + 
+         geom_histogram(bins = 35, alpha=0.6, position="identity") +
+         if (length(input$nom) > 1) {
+           scale_fill_manual(values=c("#69b3a2", "#404080")) 
+         } else if (length(input$nom) == 1 & "epitope_length" %in% input$nom) {
+           scale_fill_manual(values="#404080") 
+         } else if (length(input$nom) == 1 & "CDR3_length" %in% input$nom) {
+           scale_fill_manual(values="#69b3a2") 
+         }
+    p
+  }, 
+  res = 100)
+}
+
+shinyApp(ui, server)
+
+```
+

@@ -1,0 +1,158 @@
+---
+title: "Data Science Practical 2"
+output: html_notebook
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Questions
+
+## The Pandas library
+
+**About this practical:**
+
+The aim of this practical is to give you a realistic sense of doing data
+preparation and "exploratory analysis" tasks. After a gentle start in
+section A, you are on your own -- expect that a second version of the
+same questions with hints is provided in a separate Notebook. However,
+given that when you are doing this sort of thing in the "real world" you
+often won't get hints, I strongly recommend that you try to find a
+solution yourself first.
+
+**Note:** a few of the tasks were not covered directly in my lecture
+notes, e.g. I showed you how to turn data in a column to lowercase, but
+not "titlecase" (see question B1). This is deliberate; I can't cover
+everything in my notes, so finding things out for yourself is a crucial
+programming skill.
+
+All of the questions involve the file `proteins.csv`:
+
+``` bash
+head -3 ../data/proteins.csv
+```
+
+## A) Preliminary data exploration
+
+**1. Creating and viewing a DataFrame**
+
+Load file `proteins.csv` into a DataFrame. Use `.head()`, `.tail()`, and
+`.dtypes` to explore the data.
+
+``` r
+protein_fname <- '../Resources_practicals/data/data/proteins.csv'
+protein_fname <- read_csv(protein_fname)
+```
+
+``` python
+```
+
+``` python
+```
+
+**2. Using the `.describe()` method**
+
+a)  Use `.describe()` to calculate the 0.2, 0.4, 0.6 and 0.8 percentiles
+    for relevant (i.e. numeric) columns.<br>
+b)  Use `.describe()` to provide basic summary information about
+    nonnumeric columns.
+
+``` python
+```
+
+``` python
+```
+
+## B) Data cleaning
+
+File `proteins.csv` contains data that needs cleaning up! Successive
+changes should be made to the same dataset so that it can be saved
+(after cleaning) to a new file.
+
+**1. Letter case**
+
+Uppercase lettering is generally harder to read than lowercase text or
+capitalized text (i.e. with text starting with a capital letter). To
+make the data in `proteins.csv` more readable:<br> a) Make sure all the
+data in column `pdb_code` is lowercase<br> b) Make sure all the data in
+columns `name` and `source` are capitalized<br> c) In the `authors`
+column, make sure all the intials and the first letter of names are
+uppercase and everything else lowercase --- in effect, this is what's
+known as "titlecase".
+
+``` python
+```
+
+**2. Removing low quality data**
+
+Remove from the dataset all structures solved by an experimental method
+other than X-ray crystallography.
+
+``` python
+```
+
+**3. Removing missing values**
+
+Remove all rows that have a missing `pdb_code`.
+
+``` python
+```
+
+**4. Replacing missing values**
+
+Replace missing values in column `n_residues` by the mean value for that
+column.
+
+``` python
+```
+
+**5. Saving cleaned data**
+
+Save your cleaned-up data to a file called `protein_cleaned.csv`.
+
+``` python
+protein_cleaned_fname = 'protein_cleaned.csv'
+```
+
+``` bash
+%%bash
+head -3 protein_cleaned.csv
+```
+
+## C) Exploratory data analysis
+
+To answer the following questions, use your cleaned-up protein data from
+(new) file `protein_cleaned.csv`. You may wish to plot data using
+Matplotlib as well as use Pandas.
+
+**1. Chain number vs. chain length**
+
+Do proteins with more chains also tend to have longer chains?
+
+``` python
+```
+
+``` python
+```
+
+**2. Resolution over time**
+
+Has the resolution of proteins increased or decreased over time?
+
+``` python
+```
+
+``` python
+```
+
+**3. Protein function vs. protein size**
+
+To what extent is protein functions associated with protein size
+(`n_residues`)? Are some functions strongly associated with smaller
+proteins and others with larger proteins?
+
+``` python
+```
+
+``` python
+```

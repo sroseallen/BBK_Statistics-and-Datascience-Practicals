@@ -1,0 +1,77 @@
+---
+title: "Data handling"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+# Data Science Basics: Reading and writing files
+
+## 1. Reading a table
+
+This is code that was shown to you in the slides.
+
+We explicitely import the readr library, then use its read_csv function, that returns a tibble data frame:
+
+```{r}
+library("readr")
+df <- readr::read_csv("../data/chains.csv")
+head(df)
+```
+
+Just typing the name of the data frame will show its content:
+```{r}
+df
+```
+
+## Indexing
+
+We can also access a specific column:
+
+```{r}
+df$length
+```
+
+There are different ways to access a column:
+
+```{r}
+df$`PDB code`
+with(df, `PDB code`)
+df[["PDB code"]]
+```
+
+Compare the next output with the previous example! This time, we will get a dataframe back.
+```{r}
+df["PDB code"]
+```
+
+
+Accessing a row:
+```{r}
+df[1,]
+```
+
+Or multiple rows:
+```{r}
+df[1:3,]
+```
+
+Or specific rows (note the absence of row #2 in the output):
+```{r}
+df[c(1,3,4),]
+```
+
+Combining row and column indexing:
+```{r}
+df[1:2,2:3]
+```
+
+
+```{r}
+df[1:2,"PDB code"]
+```
+
+
+```{r}
+df[1:2,c("PDB code", "chain letter")]
+```
+

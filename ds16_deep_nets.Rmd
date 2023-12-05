@@ -1,0 +1,207 @@
+---
+title: "ds11_deep_nets"
+output: html_document
+date: "2023-11-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Packages ----------------------------------------------------------------
+
+library(luz)
+library(torch)
+library(torchvision)
+```
+
+
+
+## Using Pretrained CNN Models
+
+We now show how to use a CNN pre=trained on the  `imagenet` database to classify natural
+images, and demonstrate how we produced Figure 10.10.
+We copied six jpeg images from a digital photo album into the
+directory `book_images`. (These images are available
+  from the data section of  [www.statlearning.com](www.statlearning.com), the ISLR book website. Download `book_images.zip`; when
+clicked it creates the `book_images` directory.) We first read in the images, and
+convert them into the array format expected by the `torch`
+software to match the specifications in `imagenet`. Make sure that your working directory in `R` is set to the folder in which the images are stored.
+
+```{r}
+img_dir <- "book_images"
+image_names <- list.files(img_dir)
+num_images <- length(image_names)
+x <- torch_empty(num_images, 3, 224, 224)
+for (i in 1:num_images) {
+   img_path <- file.path(img_dir, image_names[i])
+   img <- img_path %>% 
+     base_loader() %>% 
+     transform_to_tensor() %>% 
+     transform_resize(c(224, 224)) %>% 
+     # normalize with imagenet mean and stds.
+     transform_normalize(
+       mean = c(0.485, 0.456, 0.406),
+       std = c(0.229, 0.224, 0.225)
+     )
+   x[i,,, ] <- img
+}
+```
+
+We then load the trained network. The model has 18 layers, with a fair bit of complexity.
+
+```{r}
+model <- torchvision::model_resnet18(pretrained = TRUE)
+model$eval() # put the model in evaluation mode
+```
+
+Finally, we classify our six images, and return the top three class
+choices in terms of predicted probability for each.
+
+```{r}
+preds <- model(x)
+
+mapping <- jsonlite::read_json("https://s3.amazonaws.com/deep-learning-models/image-models/imagenet_class_index.json") %>% 
+  sapply(function(x) x[[2]])
+
+top3 <- torch_topk(preds, dim = 2, k = 3)
+
+top3_prob <- top3[[1]] %>% 
+  nnf_softmax(dim = 2) %>% 
+  torch_unbind() %>% 
+  lapply(as.numeric)
+
+top3_class <- top3[[2]] %>% 
+  torch_unbind() %>% 
+  lapply(function(x) mapping[as.integer(x)])
+
+result <- purrr::map2(top3_prob, top3_class, function(pr, cl) {
+  names(pr) <- cl
+  pr
+})
+names(result) <- image_names
+print(result)
+```
+
+
+# Using an autoencoder
+
+This is a small example, to show you how you would go about training a model, then saving it (note this will create a file!)
+
+```{r}
+# Datasets and loaders ----------------------------------------------------
+
+dir <- "./mnist" # caching directory
+
+# Modify the MNIST dataset so the target is identical to the input.
+mnist_dataset2 <- torch::dataset(
+  inherit = mnist_dataset,
+  .getitem = function(i) {
+    output <- super$.getitem(i)
+    output$y <- output$x
+    output
+  }
+)
+
+train_ds <- mnist_dataset2(
+  dir,
+  download = TRUE,
+  transform = transform_to_tensor
+)
+
+test_ds <- mnist_dataset2(
+  dir,
+  train = FALSE,
+  transform = transform_to_tensor
+)
+
+train_dl <- dataloader(train_ds, batch_size = 128, shuffle = TRUE)
+test_dl <- dataloader(test_ds, batch_size = 128)
+
+# Building the network ---------------------------------------------------
+
+net <- nn_module(
+  "Net",
+  initialize = function() {
+    self$encoder <- nn_sequential(
+      nn_conv2d(1, 6, kernel_size=5),
+      nn_relu(),
+      nn_conv2d(6, 16, kernel_size=5),
+      nn_relu()
+    )
+    self$decoder <- nn_sequential(
+      nn_conv_transpose2d(16, 6, kernel_size = 5),
+      nn_relu(),
+      nn_conv_transpose2d(6, 1, kernel_size = 5),
+      nn_sigmoid()
+    )
+  },
+  forward = function(x) {
+    x %>%
+      self$encoder() %>%
+      self$decoder()
+  },
+  predict = function(x) {
+    self$encoder(x) %>%
+      torch_flatten(start_dim = 2)
+  }
+)
+
+# Train -------------------------------------------------------------------
+
+fitted <- net %>%
+  setup(
+    loss = nn_mse_loss(),
+    optimizer = optim_adam
+  ) %>%
+  fit(train_dl, epochs = 1, valid_data = test_dl)
+
+# Create predictions ------------------------------------------------------
+
+preds <- predict(fitted, test_dl)
+
+# Serialize ---------------------------------------------------------------
+
+luz_save(fitted, "mnist-autoencoder.pt")
+```
+
+Can you now load this model, and predict the values for some samples of the MNIST dataset?
+You can take inspiration from the way we loaded and tested the first model in this notebook.
+
+```{r}
+model <- luz_load("mnist-autoencoder.pt")
+# setting to eval mode using luz package
+model$training <- FALSE
+
+# getting the test data in
+dir <- "./mnist" # caching directory
+mnist_dataset2 <- torch::dataset(
+  inherit = mnist_dataset,
+  .getitem = function(i) {
+    output <- super$.getitem(i)
+    output$y <- output$x
+    output
+  }
+)
+test_ds <- mnist_dataset2(
+  dir,
+  train = FALSE,
+  transform = transform_to_tensor
+)
+
+#generating predictions
+predictions <- model %>% predict(test_ds)
+
+#getting the top 3 predictions
+top3 <- torch_topk(predictions, dim = 2, k = 3)
+
+top3_prob <- top3[[1]] %>% 
+  nnf_softmax(dim = 2) %>% 
+  torch_unbind() %>% 
+  lapply(as.numeric)
+
+```
+
+

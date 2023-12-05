@@ -1,0 +1,742 @@
+---
+title: "intro_neural_nets"
+jupyter:
+  jupytext:
+    formats: ipynb,Rmd
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.11.2
+  kernelspec:
+    display_name: R
+    language: R
+    name: ir
+output: pdf_document
+---
+
+
+# Introduction to Neural Networks
+This notebook has been adapted from the ch. 10 notebook from ISLR, produced by Daniel Falbel and Sigrid Keydana, both data scientists at **Rstudio** where these packages were produced.
+
+
+## A point of comparison: linear models
+
+We set up the data:
+
+```{r}
+library(ISLR2)
+Gitters <- na.omit(Hitters)
+n <- nrow(Gitters)
+set.seed(13)
+print(Gitters)
+```
+
+And separate out a training and test set:
+```{r}
+ntest <- trunc(n / 3)
+testid <- sample(1:n, ntest)
+```
+
+
+The linear model should be familiar, but we present it anyway:
+
+```{r}
+lfit <- lm(Salary ~ ., data = Gitters[-testid, ])
+lpred <- predict(lfit, Gitters[testid, ])
+with(Gitters[testid, ], mean(abs(lpred - Salary)))
+plot(lfit)
+```
+
+Notice the use of the `with()` command: the first argument is a
+dataframe, and the second an expression that can refer to elements of
+the dataframe by name. In this instance the dataframe corresponds to
+the test data and the expression computes the mean absolute prediction
+error on this data.
+
+Next we fit the lasso (a regularization method, useful to create models with fewer parameters;
+see `?glmnet` for more) using `glmnet`.
+Since this package does not use formulas, we create `x` and `y` first:
+
+```{r}
+x <- scale(model.matrix(Salary ~ . - 1, data = Gitters))
+y <- Gitters$Salary
+```
+
+The first line makes a call to `model.matrix()`,  which produces the same matrix
+that was used by `lm()` (the `-1`  omits the intercept).
+This function automatically converts factors to dummy variables.
+The `scale()` function standardizes the matrix so each column has mean zero and variance one.
+
+```{r}
+library(glmnet)
+cvfit <- cv.glmnet(x[-testid, ], y[-testid],
+    type.measure = "mae")
+cpred <- predict(cvfit, x[testid, ], s = "lambda.min")
+plot(cvfit)
+mean(abs(y[testid] - cpred))
+```
+
+## A first neural network
+
+To fit the neural network, we first set up a model structure
+that describes the network.
+
+```{r}
+library(torch)
+library(luz) # high-level interface for torch
+library(torchvision) # for datasets and image transformation
+library(torchdatasets) # for datasets we are going to use
+library(zeallot)
+torch_manual_seed(13)
+```
+
+```{r}
+modnn <- nn_module(
+  initialize = function(input_size) {
+    self$hidden <- nn_linear(input_size, 50)
+    self$activation <- nn_relu()
+    self$dropout <- nn_dropout(0.4)
+    self$output <- nn_linear(50, 1)
+  },
+  forward = function(x) {
+    x %>% 
+      self$hidden() %>% 
+      self$activation() %>% 
+      self$dropout() %>% 
+      self$output()
+  }
+)
+```
+
+We have created a model called `modnn` by defining the `initialize()` and `forward()` functions and passing them to the `nn_module()` function. The `initialize()` function is responsible for initializing the submodules that are used by the model. In the `forward` method we implement what happens when the model is called on input data. In this case we use the layers we defined in `initialize()` in that specific order.
+
+`self` is a list-like special object that is used to share information between the methods of the `nn_module()`. When you assign an object to `self` in `initialize()`, it can then be accessed by `forward()`.
+
+The `pipe` operator `%>%`
+ passes the previous term as the first argument to the next
+function, and returns the result.
+
+We illustrate the use of the pipe operator on a simple example. Earlier, we created `x` using the command
+
+```{r}
+library(ISLR2)
+Gitters <- na.omit(Hitters)
+n <- nrow(Gitters)
+set.seed(13)
+print(Gitters)
+
+x <- scale(model.matrix(Salary ~ . - 1, data = Gitters))
+```
+
+We first make a matrix, and then we center and scale each of the variables.
+Compound expressions like this can be difficult to parse. We could have obtained the same result using the pipe operator:
+
+```{r}
+x <- model.matrix(Salary ~ . - 1, data = Gitters) %>% scale() # remove salary value from all matrix dims (cols) and center/scale the data
+y <- Gitters$Salary # keep a list of all the salary information in a vector for later
+```
+
+Using the pipe operator makes it easier to follow the sequence of operations.
+
+We now return to our neural network. The object `modnn` has a single hidden layer with 50 hidden units, and
+a ReLU activation function. It then has a dropout layer, in which a
+random 40% of the 50 activations from the previous layer are set to zero
+during each iteration of the stochastic gradient descent
+algorithm. Finally, the output layer has just one unit with no
+activation function, indicating that the model provides a single
+quantitative output.
+
+Next we add details to  `modnn` that control the fitting
+algorithm. We minimize squared-error loss as in
+(10.22). The algorithm
+tracks the mean absolute error on the training data, and
+on validation data if it is supplied.
+
+```{r}
+modnn <- modnn %>% 
+  setup(
+    loss = nn_mse_loss(),
+    optimizer = optim_rmsprop,
+    metrics = list(luz_metric_mae())
+  ) %>% 
+  set_hparams(input_size = ncol(x))
+```
+
+In the previous line, the pipe operator passes `modnn` as the first argument to `setup()`. 
+The `setup()` function embeds these specification into a new model object. 
+We also use `set_hparam()` to specify the arguments that should be passed to the 
+`initialize()` method of `modnn`. 
+
+Loss Functions:
+
+    Mean Squared Error Loss (nn_mse_loss()):
+        Suitable for regression problems.
+        Penalizes larger errors more heavily.
+
+    Mean Absolute Error Loss (nn_l1_loss() or nn_smooth_l1_loss()):
+        Also used for regression.
+        Less sensitive to outliers compared to MSE.
+
+    Cross-Entropy Loss (nn_cross_entropy() or nn_binary_cross_entropy()):
+        Commonly used for classification problems.
+        Suitable for models producing probabilities (e.g., softmax output).
+
+    Hinge Loss (nn_hinge_loss()):
+        Used for binary classification, particularly in support vector machines (SVMs).
+
+    Huber Loss (nn_smooth_l1_loss() with delta parameter):
+        A combination of MSE and MAE, less sensitive to outliers.
+
+Optimizer Algorithms:
+
+    Stochastic Gradient Descent (SGD) (optim_sgd):
+        The classic optimization algorithm.
+        Updates weights based on the gradient of the entire training dataset or a subset (mini-batch).
+
+    Adam (optim_adam):
+        Adaptive Moment Estimation.
+        Combines ideas from RMSprop and Momentum.
+        Often performs well across different types of neural networks.
+
+    RMSprop (optim_rmsprop):
+        Root Mean Square Propagation.
+        Adjusts learning rates adaptively based on the moving average of squared gradients.
+
+    Adagrad (optim_adagrad):
+        Adapts the learning rate for each parameter based on historical gradients.
+
+    Adadelta (optim_adadelta):
+        An extension of Adagrad that dynamically adapts the learning rates over time.
+
+    Nesterov Accelerated Gradient (optim_nesterov):
+        A modification of SGD that incorporates momentum to accelerate convergence.
+
+Now we fit the model. We supply the training data and the number of `epochs`. By default,
+at each step of SGD, the algorithm randomly selects 32 training observations for 
+the computation of the gradient. Recall from Sections 10.4 and 10.7
+that an epoch amounts to the number of SGD steps required to process $n$
+observations. Since the training set has
+$n=176$, an epoch is $176/32=5.5$ SGD steps. The `fit()` function has an argument
+`valid_data`; these data are not used in the fitting,
+but can be used to track the progress of the model (in this case reporting
+mean absolute error). Here we
+actually supply the test data so we can see mean absolute error of both the
+training data and test data as the epochs proceed. To see more options
+for fitting, use `?fit.luz_module_generator`.
+
+```{r}
+ntest <- trunc(n / 3)
+testid <- sample(1:n, ntest) # defining test data (1/3 of total dataset, sampled at 'random' from the full dataset)
+
+# x: rows of data
+# y: the col of values you want to predict (in this case, salary)
+
+fitted <- modnn %>% 
+  fit(
+    data = list(x[-testid, ], matrix(y[-testid], ncol = 1)), #training data
+    valid_data = list(x[testid, ], matrix(y[testid], ncol = 1)), #test data. NOT USED IN FITTING; just here as a cross-validation comparator/progress tracker for the training data as this is needed to report on the mean absolute error (the metric set in the set-up stage)
+    epochs = 20 # 50
+  )
+```
+*(Here and elsewhere we have reduced the number of epochs to make
+    runtimes manageable; users can of course change back)*
+
+We can plot the `fitted` model to display the mean absolute error for the training and test data. 
+
+```{r}
+plot(fitted)
+```
+
+Finally, we predict from the final model, and
+evaluate its performance on the test data. Due to the use of SGD, the results vary slightly with each
+fit. 
+
+```{r}
+npred <- predict(fitted, x[testid, ]) #test dataset used (the 87 lines from earlier)
+mean(abs(y[testid] - npred)) # mean absolute difference between the actual salaries held in y and the predicted salaries held in npred.
+```
+
+We had to convert the `npred` object to a matrix, since the current
+predict method returns an object of class `torch_tensor`.
+
+```{r}
+class(npred)
+```
+
+## Multilayer Network on the MNIST Digit Data
+
+The `torchvision` package comes with a number of example datasets,
+including the `MNIST` digit data. Our first step is to load the
+`MNIST` data. The `mnist_dataset()` function is provided for this purpose.
+
+This functions returns a `dataset()`, a data structure implemented in `torch`
+allowing one to represent any dataset without making assumptions on where the data is stored and how the data is organized. Usually, torch datasets also implement the 
+data acquisition process, like downloading and caching some files on disk.
+
+```{r}
+train_ds <- mnist_dataset(root = ".", train = TRUE, download = TRUE)
+test_ds <- mnist_dataset(root = ".", train = FALSE, download = TRUE)
+
+str(train_ds[1])
+str(test_ds[2])
+
+length(train_ds)
+length(test_ds)
+```
+
+There are 60,000 images in the training data and 10,000 in the test data. The images are $28\times 28$, and stored as matrix of pixels. We need to transform each one into a vector.  
+
+Neural networks are somewhat sensitive to the scale of the inputs. For example, ridge and
+lasso regularization are affected by scaling.  Here the inputs are eight-bit
+grayscale values between 0 and 255, so we rescale to the unit
+interval. (Note: eight bits means $2^8$, which equals 256. Since the convention
+is to start at $0$, the possible values  range from $0$ to $255$.)
+
+To apply these transformations we will re-define `train_ds` and `test_ds`, now passing a the `transform` argument that will apply a transformation to each of
+the image inputs.
+
+```{r}
+transform <- function(x) {
+  x %>% 
+    torch_tensor() %>% # puts the input x into a tensor, assumes x is a numeric vector, matrix, or array
+    torch_flatten() %>% # converts into a 1D vector (2D matrix of values -> 1D vector of values)
+    torch_div(255) # normalises data to between 0-1 - common preprocessing step for neural networks
+}
+train_ds <- mnist_dataset(
+  root = ".", # i guess this is for if I've already downloaded the dataset somewhere that isn't the working directory and needed to specify?
+  train = TRUE, 
+  download = TRUE, 
+  transform = transform # applies the tranform function that flattens the data into a vector and normalises it (outputs in its own class - 'mnist' and 'dataset'
+)
+test_ds <- mnist_dataset(
+  root = ".", 
+  train = FALSE, 
+  download = TRUE,
+  transform = transform
+)
+```
+
+Let's plot at a few examples, to see what our data looks like:
+
+```{r}
+N = 28
+par(mar = c(0, 0, 0, 0), mfrow = c(5, 5))
+index <- sample(seq(5000), 25)
+for (i in index){
+  plot(as.raster(train_ds$data[i,1:N,1:N]/256))
+} 
+```
+
+Now we are ready to fit our neural network.
+
+```{r}
+modelnn <- nn_module(
+  initialize = function() {
+    self$linear1 <- nn_linear(in_features = 28*28, out_features = 256) # could make out features larger than your input as well if you want a wider model (eg up to 1024)
+    # could add another layer here for a deeper model eg nm_linear(in_features=256, out_features=256)
+    self$linear2 <- nn_linear(in_features = 256, out_features = 128)
+    self$linear3 <- nn_linear(in_features = 128, out_features = 10) # 10 classes = the numbers 0-9 (classification layer)
+    
+    self$drop1 <- nn_dropout(p = 0.4) # dropout is different? 
+    self$drop2 <- nn_dropout(p = 0.3)
+    
+    self$activation <- nn_relu()
+  },
+  forward = function(x) {
+    x %>% 
+      
+      self$linear1() %>% 
+      self$activation() %>% 
+      self$drop1() %>% 
+      
+      self$linear2() %>% 
+      self$activation() %>% 
+      self$drop2() %>% 
+      
+      self$linear3() # no dropout or activation function?
+  }
+)
+```
+
+We define the `intialize()` and `forward()` methods of the `nn_module()`.
+
+In `initialize` we specify all layers that are used in the model.
+For example, `nn_linear(784, 256)` defines a dense layer that goes from
+$28\times28=784$ input units to a hidden layer of $256$ units. The model
+will have 3 of them, each one decreasing the number of output units. The last
+will have 10 output units, because each unit will be associated to a different
+class, and we have a 10-class classification problem.
+We also defined dropout layers using `nn_dropout()`. These will be used
+to perform dropout regularization. Finally we define the activation
+layer using `nn_relu()`.
+
+In `forward()` we define the order in which these layers are called. We call them in blocks like (linear, activation, dropout), except for the last layer that does not
+use an activation function or dropout.
+
+Finally, we use `print` to summarize the model, and to make sure we got it
+all right.
+
+```{r}
+print(modelnn()) # tells you no. parameters at each layer 
+```
+
+The parameters for each layer include a bias term, which results in a
+parameter count of 235,146. For example, the first hidden
+layer involves $(784+1)\times 256=200{,}960$ parameters.
+
+Next, we add details to the model to specify the fitting algorithm. We fit the model by minimizing the cross-entropy function given by (10.13).
+
+Notice that in `torch` the cross entropy function is defined in terms of 
+the logits, for numerical stability and memory efficiency reasons. It does not require the target to be one-hot encoded.
+
+```{r}
+modelnn <- modelnn %>% 
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_rmsprop, 
+    metrics = list(luz_metric_accuracy())
+  )
+```
+
+Now we are ready to go. The final step is to supply training data, and fit the model.
+
+```{r}
+system.time(
+   fitted <- modelnn %>%
+      fit(
+        data = train_ds, 
+        epochs = 5, #15, 
+        valid_data = 0.2, # cross-validation. 0.2 here is a shortcut specially for torch datasets, which means valid_data randomly selects 20% of the training dataset train_ds for cross-validation. An alternative to providing separate validation data yourself.
+        dataloader_options = list(batch_size = 256), # needed if your training dataset is a dataloader (eg torch dataset like train_ds). Batch size is 32 by default.
+        verbose = TRUE
+      )
+ )
+plot(fitted)
+```
+
+We have suppressed the output here. The output is a progress report on the
+fitting of the model, grouped by epoch. This is very useful, since on
+large datasets fitting can take time. Fitting this model took 215
+seconds on a 2.7GHz MacBook Pro with 4 cores and 16 GB of RAM.
+Here we specified a
+validation split of 20%, so training is actually performed on
+80% of the 60,000 observations in the training set. This is an
+alternative to actually supplying validation data, like we did in
+Section 10.9.1. See
+`?fit.luz_module_generator` for all the optional fitting arguments. SGD  uses batches
+of 256 observations in computing the gradient, and doing the
+arithmetic, we see that an epoch corresponds to 188 gradient steps.
+The last `plot()` command produces a figure similar to Figure 10.18.
+
+To obtain the test error in Table 10.1, we first write
+a simple function `accuracy()` that compares predicted and true
+class labels, and then use it to evaluate our predictions.
+
+```{r}
+accuracy <- function(pred, truth) {
+   mean(pred == truth) }
+
+# gets the true classes from all observations in test_ds.
+truth <- sapply(seq_along(test_ds), function(x) test_ds[x][[2]])
+
+predictions <- fitted %>% 
+  predict(test_ds) %>% 
+  torch_argmax(dim = 2) # from the list of probabilities of the different classes, return the class with the highest probability
+sum(predictions == truth) / length(predictions)
+```
+
+You should get a mean accuracy of about 0.95 (results may vary slightly, due to the stochastic nature of the optimisation).
+
+We can plot some test cases, the prediction we get, and the label (e.g. the "true value"):
+(Wrong examples will be color inverted)
+
+```{r}
+par(mar = c(0, 0, 0, 0), mfrow = c(1, 5))
+index <- sample(seq(1000), 5)
+print(predictions[index]-1)
+print(truth[index]-1)
+for (i in index) {
+  if (predictions[i]$item() == truth[i]) {
+    plot(as.raster(test_ds$data[i,1:N,1:N]/256))
+  }
+  else {
+    plot(as.raster(1-test_ds$data[i,1:N,1:N]/256))
+  }
+}
+```
+
+
+The table also reports LDA (Chapter 4) and multiclass logistic
+regression. Although packages such as `glmnet` can handle
+multiclass logistic regression, they are quite slow on this large
+dataset. It is much faster and quite easy to fit such a model
+using the `luz` software. We just have an input layer and output layer, and omit the hidden layers!
+
+```{r}
+modellr <- nn_module(
+  initialize = function() {
+    self$linear <- nn_linear(784, 10)
+  },
+  forward = function(x) {
+    self$linear(x)
+  }
+)
+print(modellr())
+```
+
+We fit the model just as before.
+
+```{r}
+fit_modellr <- modellr %>% 
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_rmsprop,
+    metrics = list(luz_metric_accuracy()) # because its not numeric, so an absolute mean square value wouldn't mean much - you're compare the actual class (a number from 0-9) to the predicted class (also a number from 0-9)
+  ) %>% 
+  fit(
+    data = train_ds, 
+    epochs = 5,
+    valid_data = 0.2, # a shortcut for torch datasets only, where 0.2 here randomly picks 20% of the total mnist training dataset for the cross-validation
+    dataloader_options = list(batch_size = 128)
+  )
+
+fit_modellr %>% 
+  predict(test_ds) %>% 
+  torch_argmax(dim = 2) %>%  # the predicted class is the one with higher 'logit'.
+  as_array() %>% # we convert to an R object
+  accuracy(truth)
+
+
+# alternatively one can use the `evaluate` function to get the results
+# on the test_ds
+evaluate(fit_modellr, test_ds)
+```
+
+
+Exercise: Can you further improve the model above? Try to tweak some of the training parameters and run it again! (Tip: more cycles may be a good place to start...)
+```{r}
+modelnn <- nn_module(
+  initialize = function() {
+    self$linear1 <- nn_linear(in_features = 28*28, out_features = 1024) # could make out features larger than your input as well if you want a wider model (eg up to 1024)
+    self$linear2 <- nn_linear(in_features = 1024, out_features = 256) 
+    self$linear3 <- nn_linear(in_features = 256, out_features = 128)
+    self$linear4 <- nn_linear(in_features = 128, out_features = 10) # 10 classes = the numbers 0-9 (classification layer)
+    
+    self$drop1 <- nn_dropout(p = 0.4) # dropout is different? 
+    self$drop2 <- nn_dropout(p = 0.3)
+    
+    self$activation <- nn_relu()
+  },
+  forward = function(x) {
+    x %>% 
+      
+      self$linear1() %>% 
+      self$activation() %>% 
+      self$drop1() %>% 
+      
+      self$linear2() %>% 
+      self$activation() %>% 
+      self$drop1() %>% 
+      
+      self$linear3() %>%
+      self$activation() %>% 
+      self$drop2() %>% 
+      
+      self$linear4()
+  }
+)
+fitted <- modelnn %>% 
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_rmsprop, 
+    metrics = list(luz_metric_accuracy())
+  ) %>%
+  fit(
+    data = train_ds, 
+    epochs = 15, 
+    valid_data = 0.2, # cross-validation. 0.2 here is a shortcut specially for torch datasets, which means valid_data randomly selects 20% of the training dataset train_ds for cross-validation. An alternative to providing separate validation data yourself.
+    dataloader_options = list(batch_size = 256), # needed if your training dataset is a dataloader (eg torch dataset like train_ds). Batch size is 32 by default.
+    verbose = TRUE
+    )
+
+
+evaluate(fitted, test_ds)
+
+# original accuracy: 0.9544, loss: 0.1605
+# test 1: adding activation and dropout layer to layer 3. accuracy 0.098.
+# test 2: removed additional activation/dropout, increased depth of model by 1. Accuracy: 0.928, loss: 0.2729
+# test 3: made model wider in linear 1. Accuracy: 0.9546, loss: 0.1772
+# test 4: increased number of epochs from 5 to 15. Accuracy: 0.959, loss: 0.1698
+```
+
+### Convolutional Neural Networks
+
+In this section we fit a CNN to the `CIFAR` data, which is available in the `torchvision`
+package. It is arranged in a similar fashion as the `MNIST` data.
+
+```{r}
+transform <- function(x) {
+  transform_to_tensor(x)
+}
+
+train_ds <- cifar100_dataset(
+  root = "./", 
+  train = TRUE, 
+  download = TRUE, 
+  transform = transform
+)
+
+test_ds <- cifar100_dataset(
+  root = "./", 
+  train = FALSE, 
+  transform = transform
+)
+
+str(train_ds[1])
+length(train_ds)
+```
+
+The CIFAR dataset consists of 50,000 training images, each represented by a 3d tensor:
+each three-color image is represented as a set of three channels, each of which consists of
+$32\times 32$ eight-bit pixels. We standardize as we did for the
+digits, but keep the array structure. This is accomplished with the `transform` argument.
+
+Before we start, we look at some of the training images; similar code produced
+Figure 10.5 on page 411.
+
+```{r}
+par(mar = c(0, 0, 0, 0), mfrow = c(5, 5))
+index <- sample(seq(50000), 25)
+for (i in index) plot(as.raster(as.array(train_ds[i][[1]]$permute(c(2,3,1)))))
+```
+
+The `as.raster()` function converts the feature map so that it can be plotted as a color image.
+
+Here we specify a moderately-sized  CNN for
+demonstration purposes, similar in structure to Figure 10.8.
+
+```{r}
+conv_block <- nn_module(
+  initialize = function(in_channels, out_channels) {
+    self$conv <- nn_conv2d(
+      in_channels = in_channels, 
+      out_channels = out_channels, 
+      kernel_size = c(3,3), 
+      padding = "same" # same amount of 0 padding on either side of the input
+    )
+    self$relu <- nn_relu()
+    self$pool <- nn_max_pool2d(kernel_size = c(2,2))
+  },
+  forward = function(x) {
+    x %>% 
+      self$conv() %>% 
+      self$relu() %>% 
+      self$pool()
+  }
+)
+
+model <- nn_module(
+  initialize = function() {
+    self$conv <- nn_sequential(
+      conv_block(3, 32),
+      conv_block(32, 64),
+      conv_block(64, 128),
+      conv_block(128, 256),
+      conv_block(256, 512)
+    )
+    self$output <- nn_sequential(
+      nn_dropout(0.5),
+      nn_linear(512, 1024), #*
+      nn_relu(),
+      nn_linear(1024, 100)
+    )
+  },
+  forward = function(x) {
+    x %>% 
+      self$conv() %>% 
+      torch_flatten(start_dim = 2) %>% 
+      self$output()
+  }
+)
+model()
+```
+
+Notice that we used the `padding = "same"` argument to
+`nn_conv2d()`, which ensures that the output channels have the
+same dimension as the input channels. There are 32 channels in the first
+hidden layer, in contrast to the three channels in the input layer. We
+use a $3\times 3$ convolution filter for each channel in all the layers. Each
+convolution is followed by a max-pooling layer over $2\times2$
+blocks. By studying the summary, we can see that the channels halve in both
+dimensions
+after each of these max-pooling operations. After the last of these we
+have a layer with  256 channels of dimension $2\times 2$. These are then
+flattened to a dense layer of size 1,024:
+in other words, each of the $2\times 2$ matrices is turned into a
+$4$-vector, and put side-by-side in one layer. This is followed by a
+dropout regularization layer,  then
+another dense layer of size 512, and finally, the
+output layer.
+
+Finally, we specify the fitting algorithm, and fit the model.
+
+```{r}
+fitted <- model %>% 
+  setup(
+    loss = nn_cross_entropy_loss(),
+    optimizer = optim_rmsprop, 
+    metrics = list(luz_metric_accuracy())
+  ) %>% 
+  set_opt_hparams(lr = 0.001) %>% 
+  fit(
+    train_ds,
+    epochs = 15, #*
+    valid_data = 0.2,
+    dataloader_options = list(batch_size = 256)
+  )
+
+print(fitted)
+
+evaluate(fitted, test_ds)
+
+# model 1: acc: 0.2915, loss: 2.8269
+# model 2: acc: 0.2491, loss: 3.0216
+# model 3: acc: 0.3457, loss: 2.584
+```
+
+This model takes 10 minutes to run and achieves 36% accuracy on the test
+data. Although this is not terrible for 100-class data (a random
+classifier gets 1% accuracy), searching the web we see results around
+75%. Typically it takes a lot of architecture carpentry,
+fiddling with regularization, and time to achieve such results.
+
+```{r}
+plot(fitted)
+```
+
+
+We can once again plot our predicted labels, the true labels, and the data used to make the prediction:
+(This time wrong predictions are crossed, and you will mostly get wrong results...)
+
+```{r}
+par(mar = c(0, 0, 0, 0), mfrow = c(5, 5))
+index <- sample(seq(5000), 25)
+for (i in index) print(test_ds$classes[predictions[i]$item()])
+# The "true" class
+test_ds$classes[test_ds$y[index]]
+
+for (i in index) {
+  if (predictions[i]$item() == test_ds$y[i]) {
+    plot(as.raster(as.array(test_ds[i][[1]]$permute(c(2,3,1)))))
+  }
+  else {
+    plot(as.raster(as.array(test_ds[i][[1]]$permute(c(2,3,1)))))#, angle=2)
+    abline(a=0, b=1, lwd=5, col="red", new=FALSE)
+  }
+}
+```
+
+
+Exercise: Can you get this model to above 40% accuracy ? This should be pretty straightforward.
+Getting anything above 50% will be very, very tough... Next time, we will see how to use pre-trained, high-accuracy models.

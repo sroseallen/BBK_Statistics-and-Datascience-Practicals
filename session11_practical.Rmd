@@ -1,0 +1,106 @@
+---
+title: "Data Science Practical 1"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+
+# Questions
+
+This practical is mainly designed to get you to tackle several data preparation tasks of varying difficulty (I have roughly graded them as **"standard"**, **"moderate"** and **"hard"**).
+
+I don't expect anyone to complete them in the allotted time, so choose the questions you think may be most useful -- this is more about practicing your general programming skills and giving you insights into the types of problems one faces when handling real (i.e. messy) data, rather than about specific things you need to remember.
+
+## A) Date and file formats
+
+**1. `tsv` to `csv` conversion (standard)**
+
+Write a script that will convert a `tsv` (tab separated values) file into a `csv` (comma separated values) file. Use your script to convert file `simple.tsv` into file `simple.csv`. See if you can do this without any hints...
+
+``` r
+simple_tsv_fname <- './data/simple.tsv'
+simple_csv_fname <- './data/simple.csv'
+library("readr")
+
+tab_sep <- read_tsv("../Resources_practicals/data/data/simple.tsv")
+write_csv(tab_sep, "outputs/session11_csvoutput.csv")
+```
+
+
+**3. `tsv` files containing special characters (hard)**
+
+Sometimes values (fields) in a `tsv` file may contain embedded commas or newline (line break) characters. An example is file `hard.tsv`. Such files cannot be converted to a `csv` file in such a simple way (i.e. as simple as was possible with file `simple.tsv`). How should one handle this problem? There are guidelines in the form of a [Request for Comments (RFC)](https://tools.ietf.org/html/rfc4180) ("a type of publication from the technology community" -- *Wikipedia*).
+
+``` r
+hard_tsv_fname <- '../data/hard.tsv'
+hard_csv_fname <- 'hard.csv'
+library("readr")
+library("tidyr")
+library("dplyr")
+library("stringr")
+
+tab_sep_2 <- read_tsv("../Resources_practicals/data/data/hard.tsv")
+tab_sep_2 %>%
+  mutate(`English Name(s)` = gsub("\n", " ", `English Name(s)`)) %>%
+  mutate(`English Name(s)` = gsub(",", "", `English Name(s)`)) %>%
+  mutate(`English Name(s)` = gsub("\"", "", `English Name(s)`)) -> tab_sep_2_clean
+
+```
+
+## B) Restructuring data
+
+**Note:** All these questions use file `tb.csv`, which is the "messy" table from Hadley Wickham's *Tidy Data* paper (shown in the first of this session's videos) stored in `csv` format.
+
+**1. Removing rows (standard)**
+
+Write a script that reads in `tb.csv`, prompts the user to enter a country code (e.g. `AL`), and prints out the contents to the screen with the relevant line (if any) removed.
+
+``` r
+tb_fname = '../data/tb.csv'
+library("readr")
+
+tb <- read_csv("../Resources_practicals/data/data/tb.csv")
+input <- as.character(readline("Enter a country code (e.g. 'AL'): "))
+
+if (!is.na(input)) {
+  filter(tb, country==input)
+} else {
+  cat("Invalid input. Please enter a valid character.\n")
+}
+```
+
+**2. Removing columns (hard)**
+
+Write a script that reads in `tb.csv`, prompts the user to enter a column heading (e.g. `mu`), and prints out the contents to the screen with the relevant column (if any) removed.
+
+``` r
+tb_fname = '../data/tb.csv'
+library("readr")
+
+tb <- read_csv("../Resources_practicals/data/data/tb.csv")
+input <- as.character(readline("Enter a column heading to remove (e.g. 'mu'): "))
+
+if (!is.na(input)) {
+  select(tb, !input)
+} else {
+  cat("Invalid input. Please enter a valid character.\n")
+}
+```
+
+**3. "Melting" (very hard)**
+
+Write code to convert the `tb.csv` file into a `csv` version of the **molten data table** from Hadly Wickham's paper --- it is the table on the left-hand side of the final slide of section 1. The `mu` column (which contains no data) should be removed. (Note that the table in the paper only contains a subset of the rows in the full molten table.)
+
+``` r
+tb_fname = '../data/tb.csv'
+library("readr")
+library("tidyr")
+
+tb <- read_csv("../Resources_practicals/data/data/tb.csv")
+
+tb %>%
+  select (!mu) %>%
+  mutate(across(c(3:10), ~ as.numeric(.x))) %>%
+  mutate(across(c(3:10), ~ replace_na(.x, 0))) %>%
+  pivot_longer(cols=c(3:10), names_to="column") -> tb_molten
+```

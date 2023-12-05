@@ -1,0 +1,100 @@
+---
+title: "Supervised learning"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Decision tree
+
+We will use the `tree` library, and the `iris` dataset again:
+```{r}
+library(tree)
+attach(iris)
+```
+
+Now let's make a tree!
+```{r}
+tree.iris <- tree(Species ~ ., iris)
+plot(tree.iris, type="uniform")
+text(tree.iris)
+```
+
+We can create simpler trees:
+```{r}
+tree.iris <- tree(Species ~ ., iris, control = tree.control(nrow(iris), minsize=50))
+plot(tree.iris, type="uniform")
+text(tree.iris)
+```
+
+And longer ones:
+```{r}
+tree.iris <- tree(Species ~ ., iris, control = tree.control(nrow(iris), mindev=0))
+plot(tree.iris, type="uniform")
+text(tree.iris)
+```
+
+
+This last tree is very good, essentially classifying all the samples perfectly, but is that what we want?
+
+We can run cross-validation on the tree, and see what tree size gives us the best performance, when ran on samples that haven't been observed during training:
+
+```{r}
+iris.cv <- cv.tree(tree.iris)
+plot(iris.cv, type="b")
+```
+
+
+We can see that smaller trees actually give better results!
+
+# Random Forest
+
+Let us now try to use the random forest classifier:
+
+```{r}
+library(randomForest)
+rf.iris <- randomForest(Species ~ ., data = iris)
+plot(rf.iris)
+```
+
+
+As we incorporate more and more trees, our error becomes smaller.
+We get an error that is smaller than the best tree, while being more robust:
+the random forest classifier is a more powerful method than a single decision tree.
+
+This increased performance comes at the cost of less interpretaibility.
+
+We cannot (easily) visualise the trees, but we can still extract parameters,
+such as the most important features in our dataset, for the classifier:
+
+```{r}
+importance(rf.iris)
+```
+
+This can be shown visually:
+
+```{r}
+varImpPlot(rf.iris)
+```
+We can conclude from this that the petal length and width are more useful for the classification of our dataset (does that match with the trees we obtained above?)
+
+
+# SVM
+
+Let us now train an SVM classifier on our iris dataset:
+
+```{r}
+library(e1071)
+svm.iris <- svm(Species ~ . - Species, data = iris, kernel = "linear", 
+    cost = 200, scale = TRUE)
+plot(svm.iris, iris, Petal.Length ~ Petal.Width)
+```
+
+A polynomial kernel will give a different surface (try varying the cost parameter here, to 100):
+```{r}
+svm.iris <- svm(Species ~ . - Species, data = iris, kernel = "polynomial", 
+    cost = 100, scale = TRUE)
+plot(svm.iris, iris, Petal.Length ~ Petal.Width)
+```
