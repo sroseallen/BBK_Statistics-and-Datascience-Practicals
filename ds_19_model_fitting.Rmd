@@ -1,0 +1,270 @@
+---
+title: "Pre-exam revision"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+Read in your data
+```{r}
+library(readr)
+library(dplyr)
+
+read_csv("../Resources_practicals/data/data/breast_cancer.csv") -> breast_cancer
+breast_cancer %>% select(!33) -> breast_cancer
+breast_cancer
+```
+
+Then:
+- identify the label variable 
+- create a plot with two boxplots (one for each diagonsis), for a feature of your choice
+- split the data into a training and testing set.
+- If you haven't done so yet, try to identify imbalances in your dataset: is there a label that is much more common than the other? Does your dataset have missing values?
+```{r}
+library(ggplot2)
+max_ylim <- ceiling(max(breast_cancer$"radius_mean"))
+
+ggplot(breast_cancer, 
+       aes(x=diagnosis, y=radius_mean)) +
+  geom_boxplot()
+
+```
+
+
+TRAINING AND TESTING DATASET PLUS VISUALISATION PLOTS
+This is cross-validation by training your model on seen data and then testing it on unseen/independent data.
+You could:
+- Split the data, train on N-1 parts, test on the 1 set left (N-fold) (or single sample left)
+- As above and also average the parameters
+- Bootstrap by taking a random sub-sample of your samples (as below!)
+```{r}
+ntest <- trunc(nrow(breast_cancer) / 3)
+df_rows <- c(1:nrow(breast_cancer))
+
+breast_cancer %>% 
+  slice(sample(df_rows, ntest)) %>% 
+  mutate(diagnosis = as.factor(diagnosis)) %>%
+  arrange(desc(diagnosis)) -> testing
+
+ggplot(testing, 
+       aes(x=diagnosis, y=radius_mean)) +
+  geom_boxplot()
+
+breast_cancer %>% 
+  slice(df_rows[!df_rows %in% sample(df_rows, ntest)]) %>% 
+  mutate(diagnosis = as.factor(diagnosis)) %>%
+  arrange(desc(diagnosis)) -> training
+
+ggplot(training, 
+       aes(x=diagnosis, y=radius_mean)) +
+  geom_boxplot()
+
+```
+
+
+LINEAR MODEL FITTING
+Use for: numeric and numeric, REGRESSION not classification
+Note that regression usually requires some sort of ordering of the data.
+```{r}
+# fitting model to data
+lm.fit <- lm(radius_mean ~ area_mean, data=breast_cancer) # model using two parameters
+summary(lm.fit) # summary stats for the model
+lm.fit2 <- lm(radius_mean ~ . -radius_mean, data=breast_cancer) # model using all parameters except radius_mean
+summary(lm.fit2)
+
+# don't forget: a neat hack: plot(lm.fit) gives you a bunch of useful plots, including Q-Q, Residuals, and more!
+
+# visualising the fit of the model
+plot(breast_cancer$area_mean, breast_cancer$radius_mean, pch = 1) # make a plot of the parameters used in the model (model 1)
+abline(lm.fit, col="red", lwd=2) # plotting the fit of model 1
+abline(lm.fit2, col="blue") # plotting the fit of model 2
+
+# predicting using the model
+plot(breast_cancer$radius_mean, predict(lm.fit), col="red", pch=20) # predicted values from model 1
+points(breast_cancer$radius_mean, predict(lm.fit2), col="blue", pch=20) # predicted values from model 2
+lines(breast_cancer$radius_mean, breast_cancer$radius_mean, col = "black", lwd= 3) # actual values
+
+# q-q plot (visualising the model as well)
+# N.B,: this is not a normalised Q-Q plot, care should be taken when comparing models that they are approriately scaled.
+quants <- seq(0, 1, 0.05)
+radius_quantile <- quantile(breast_cancer$radius_mean, probs = quants)
+plot(radius_quantile, quantile(predict(lm.fit), probs = quants), col = "red", pch = 20)
+points(radius_quantile, quantile(predict(lm.fit2), probs = quants), col = "blue", pch = 20)
+
+# alt. q-q plot
+ggplot() + 
+  stat_qq(aes(sample = breast_cancer$radius_mean - predict(lm.fit)), col = "red") + 
+  stat_qq(aes(sample = breast_cancer$radius_mean - predict(lm.fit2)), col = "blue")
+
+```
+
+
+SUPPORT VECTOR MACHINE
+Use for: Classification OR regression problems (factor list against a numeric parameter for classification). Can be linear, radial, polynomial, etc.
+```{r}
+# CLASSIFICATIONS
+library(e1071)
+breast_svm <- svm(diagnosis ~ . -diagnosis, data = training, kernal = "linear") # train with the training dataset. improve by altering kernal, cost, or degree (polynomials)
+summary(breast_svm)
+
+prediction <- predict(breast_svm, testing) # predict with the testing dataset
+confusionMatrix(prediction, testing$diagnosis) # to give you summary statistics
+
+ggplot(testing, aes(x=diagnosis, y=radius_mean, fill=prediction)) + geom_boxplot() # visualisation 1: actual vs predicted (for classification problems - boxplot)
+plot(testing$radius_mean, prediction, col = "green", pch = 20) # visualisation 2: actual vs predicted (for numeric vs numeric regression - scatter)
+
+# REGRESSIONS
+library(e1071)
+breast_svm <- svm(radius_mean ~ . -radius_mean, data = training, kernal = "linear") # train with the training dataset. improve by altering kernal, cost, or degree (polynomials)
+summary(breast_svm)
+
+prediction <- predict(breast_svm, testing) # predict with the testing dataset
+
+quants <- seq(0, 1, 0.05)
+radius_quantile <- quantile(testing$radius_mean, probs = quants)
+plot(testing$radius_mean, testing$radius_mean, col = "black", pch = 20) # confirmatory q-q plot 2 actual values
+points(radius_quantile, quantile(prediction, probs = quants), col = "red", pch = 20) # confirmatory q-q plot 2 (only works for regression problems)
+ggplot() + stat_qq(aes(sample = testing$radius_mean - prediction), col = "red") # confirmatory q-q plot 2 (only works for regression problems)
+```
+
+
+CONFUSION MATRIX
+Basic confusion matrix for CLASSIFICATION only (factor list against a numeric parameter) - also gives you some summary statistics with specificity and sensitivity
+If you might have a clear separation between your factors after having a look (plotting the data), it might be worth seeing how accurate an eyeballed separation with a confusion matrix is. 
+```{r}
+library(caret)
+confusionMatrix(as.factor(breast_cancer$radius_mean > 14), as.factor(breast_cancer$diagnosis == "M"))
+
+```
+
+
+LDA - Linear Discriminant Analysis
+Use for: CLASSIFICATION problems. (?lda)
+Can also have a quadratic flavour for non-linear classifications (?qda)
+```{r}
+# LDA
+library(MASS)
+lda.fit <- lda(diagnosis ~ radius_mean, data = breast_cancer)
+plot(lda.fit)
+lda.pred <- predict(lda.fit, breast_cancer)
+names(lda.pred)
+
+lda.class <- lda.pred$class
+#table(lda.class, breast_cancer$radius_mean)
+#mean(lda.class == breast_cancer$radius_mean)
+
+plot(breast_cancer$radius_mean, breast_cancer$area_mean, col=as.factor(breast_cancer$diagnosis))
+plot(breast_cancer$radius_mean, breast_cancer$area_mean, col=lda.pred$class)
+
+```
+
+
+KNN (K Nearest Neighbours)
+```{r}
+
+```
+
+
+BASIC DECISION TREE
+Use for: CLASSIFICATION problems.
+Useful because: Nodes (more nodes = more flexible), easily interpretable, and comparable (results-wise and structure-wise)
+```{r}
+library(tree)
+attach(breast_cancer)
+breast.tree <- tree(diagnosis ~ ., breast_cancer) #options args to make tree smaller/bigger: control = tree.control(nrow(iris), minsize=50 (or 0 for bigger)
+plot(breast.tree , type="uniform")
+text(breast.tree)
+
+breast.cv <- cv.tree(breast.tree) #cross-validation step. built-in for tree package! Don't need to split data upfront!
+plot(breast.cv, type="b")
+```
+
+
+RANDOM FOREST
+Use for: CLASSIFICATION problems.
+Possible ways to improve the model:
+- Boosting: To get a better model by re-weighting the samples - focus on harder to predict data
+- Bagging: Train classifiers on a subset of data and combine their results
+- Voting: Take the mean average or most popular classifier
+```{r}
+# random forest
+library(randomForest)
+rf_breast <- randomForest(diagnosis ~ ., data = training)
+plot(rf_breast)
+
+importance(rf_breast) # table of feature importance for the trees.
+varImpPlot(rf_breast)
+```
+
+
+CNN (Classification)
+Use for: Prediction problems (works with classification and regression)
+```{r}
+library(torch)
+library(luz) # high-level interface for torch
+library(torchvision) # for datasets and image transformation
+
+x <- scale(model.matrix(Salary ~ . - 1, data = Gitters)) # scale the data
+
+# create model
+modnn <- nn_module(
+  initialize = function(input_size) {
+    self$hidden <- nn_linear(input_size, 50)
+    self$activation <- nn_relu()
+    self$dropout <- nn_dropout(0.4)
+    self$output <- nn_linear(50, 1)
+  },
+  forward = function(x) {
+    x %>% 
+      self$hidden() %>% 
+      self$activation() %>% 
+      self$dropout() %>% 
+      self$output()
+  }
+)
+
+# setup model with loss function, optimisation function, and some metrics to compare/compute
+modnn <- modnn %>% 
+  setup(
+    loss = nn_mse_loss(), # mean squared error, good for regression. cross-entropy is good for classification.
+    optimizer = optim_rmsprop, # root mean square optimisation
+    metrics = list(luz_metric_mae()) # mean absolute error as a metric for comparison
+  ) %>% 
+  set_hparams(input_size = ncol(x))
+
+# fit the data
+ntest <- trunc(n / 3)
+testid <- sample(1:n, ntest) # defining test data (1/3 of total dataset, sampled at 'random' from the full dataset)
+# x: rows of data
+# y: the col of values you want to predict (in this case, salary)
+
+fitted <- modnn %>% 
+  fit(
+    data = list(x[-testid, ], matrix(y[-testid], ncol = 1)), #training data
+    valid_data = list(x[testid, ], matrix(y[testid], ncol = 1)), #test data. NOT USED IN FITTING; just here as a cross-validation comparator/progress tracker for the training data as this is needed to report on the mean absolute error (the metric set in the set-up stage)
+    epochs = 20 # 50
+  )
+plot(fitted)
+
+# test the data
+npred <- predict(fitted, x[testid, ]) #test dataset used (the 87 lines from earlier)
+mean(abs(y[testid] - npred)) # mean absolute difference between the actual salaries held in y and the predicted salaries held in npred.
+```
+
+
+Unsupervised methods include:
+- Clustering (K-means and hierarchical clustering)
+- Density Estimation (Gaussian mixture model, expectation-maximisation)
+- Dimensionality Reduction (PCA, MDS, Isomap, t-SNE)
+
+
+DEBUGGING
+- Scale the data especially if multiple classifiers!
+- Non-normalised data might be an issue as it affects sample weighting
+- Unbalanced data might be an issue. Check your data (if few samples, might have extreme bias)
+- Data might be correlated (ie: check your independant datapoints/features are actually independent as correlated samples will be over-represented and over-shrink the error estimates)
+- Non-linear methods for data without a clear numerical order!
+- If all else fails, combine some classifiers to improve your model.
+- MAKE SURE YOUR DATA IS EVALUATED ON INDEPENDENT TEST SETS OF DATA!!!
+- LASSO automatic feature selection can visualise which feature is most important to the model
+- Partial Least Squares (PLS) to reduce the models might help for big datasets
